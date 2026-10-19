@@ -67,7 +67,7 @@ from verl.utils.py_functional import rename_dict
 from verl.utils.rollout_skip import RolloutSkip
 from verl.utils.seqlen_balancing import calculate_workload, get_seqlen_balanced_partitions, log_seqlen_unbalance
 from verl.utils.torch_functional import masked_mean
-from verl.utils.tracking import ValidationGenerationsLogger
+from verl.utils.tracking import Tracking, ValidationGenerationsLogger
 from verl.workers.config import DistillationConfig, EngineConfig
 from verl.workers.rollout.llm_server import LLMServerManager
 from verl.workers.utils.padding import left_right_2_no_padding, no_padding_2_padding
@@ -290,6 +290,8 @@ class RayPPOTrainer:
     managing actor rollouts, critic training, and reward computation with Ray backend.
     Supports various model architectures including FSDP, Megatron, vLLM, and SGLang integration.
     """
+
+    tracking_class = Tracking
 
     # TODO: support each role have individual ray_worker_group_cls,
     # i.e., support different backend of different role
@@ -1359,6 +1361,14 @@ class RayPPOTrainer:
         critic_output = DataProto.from_single_dict(data={}, meta_info={"metrics": output})
         return critic_output
 
+    def _compute_advantage(self, *args, **kwargs):
+        return compute_advantage(*args, **kwargs)
+
+    def _apply_rollout_correction(self, batch, config):
+        from verl.trainer.ppo.rollout_corr_helper import compute_rollout_correction_and_add_to_batch
+
+        return compute_rollout_correction_and_add_to_batch(batch, config)
+
     def fit(self):
         """
         The training loop of PPO.
@@ -1371,9 +1381,7 @@ class RayPPOTrainer:
 
         from omegaconf import OmegaConf
 
-        from verl.utils.tracking import Tracking
-
-        logger = Tracking(
+        logger = self.tracking_class(
             project_name=self.config.trainer.project_name,
             experiment_name=self.config.trainer.experiment_name,
             default_backend=self.config.trainer.logger,
@@ -1610,10 +1618,8 @@ class RayPPOTrainer:
                             and "rollout_log_probs" in batch.batch
                             and not bypass_recomputing_logprobs  # Only in decoupled mode
                         ):
-                            from verl.trainer.ppo.rollout_corr_helper import compute_rollout_correction_and_add_to_batch
-
                             # Compute IS weights, apply rejection sampling, compute metrics
-                            batch, is_metrics = compute_rollout_correction_and_add_to_batch(batch, rollout_corr_config)
+                            batch, is_metrics = self._apply_rollout_correction(batch, rollout_corr_config)
                             # IS and off-policy metrics already have rollout_corr/ prefix
                             metrics.update(is_metrics)
 
@@ -1622,7 +1628,7 @@ class RayPPOTrainer:
                             "norm_adv_by_std_in_grpo", True
                         )  # GRPO adv normalization factor
 
-                        batch = compute_advantage(
+                        batch = self._compute_advantage(
                             batch,
                             adv_estimator=self.config.algorithm.adv_estimator,
                             gamma=self.config.algorithm.gamma,
