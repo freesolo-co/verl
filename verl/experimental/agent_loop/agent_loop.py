@@ -450,10 +450,8 @@ class AgentLoopWorker:
         # Online policy distillation
         self.distillation_enabled = is_distillation_enabled(config.distillation)
         if self.distillation_enabled:
-            from verl.experimental.teacher_loop.teacher_manager import AsyncTeacherLLMServerManager
-
             self.teacher_key: str = config.distillation.teacher_key
-            self.teacher_server_manager = AsyncTeacherLLMServerManager(
+            self.teacher_server_manager = self._create_teacher_manager(
                 config=config,
                 teacher_client=teacher_client,
             )
@@ -487,6 +485,11 @@ class AgentLoopWorker:
             trace_config.get("max_samples_per_step_per_worker", None),
         )
 
+    def _create_teacher_manager(self, **kwargs):
+        from verl.experimental.teacher_loop.teacher_manager import AsyncTeacherLLMServerManager
+
+        return AsyncTeacherLLMServerManager(**kwargs)
+
     def _get_mm_processor_kwargs(self, audio_data: Optional[list[Any]] = None) -> dict[str, Any]:
         """Return multimodal processor kwargs with audio sampling-rate defaults."""
         mm_processor_kwargs = dict(self.mm_processor_kwargs or {})
@@ -496,7 +499,7 @@ class AgentLoopWorker:
                 mm_processor_kwargs["sampling_rate"] = int(sampling_rate)
         return mm_processor_kwargs
 
-    async def generate_sequences(self, batch: DataProto) -> DataProto:
+    async def generate_sequences(self, batch: DataProto, *, trajectory_info=None) -> DataProto:
         """Generate sequences from agent loop.
 
         Args:
@@ -564,9 +567,12 @@ class AgentLoopWorker:
         else:
             traced_indices = set(range(len(batch)))
 
-        trajectory_info = await get_trajectory_info(
-            batch.meta_info.get("global_steps", -1), index.tolist(), batch.meta_info.get("validate", False)
-        )
+        if trajectory_info is None:
+            trajectory_info = await get_trajectory_info(
+                batch.meta_info.get("global_steps", -1), index.tolist(), batch.meta_info.get("validate", False)
+            )
+        if len(trajectory_info) != len(batch):
+            raise ValueError("trajectory identity count does not match batch")
 
         # NOTE: __do_sample__ is an internal per-sample override used by REMAX combined rollout.
         # Do not forward it to concrete agent loops, which may reject unknown kwargs.

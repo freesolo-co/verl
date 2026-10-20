@@ -31,7 +31,6 @@ from torch.distributed.fsdp.api import FullStateDictConfig, ShardedStateDictConf
 from torch.distributed.tensor import DTensor
 
 import verl.utils.torch_functional as verl_F
-from verl.models.transformers.monkey_patch import apply_monkey_patch
 from verl.trainer.config import CheckpointConfig
 from verl.utils import tensordict_utils as tu
 from verl.utils.activation_offload import enable_activation_offloading
@@ -228,7 +227,6 @@ class FSDPEngine(BaseEngine):
         self.use_ulysses_sp = self.ulysses_sequence_parallel_size > 1
 
     def _build_module(self):
-        from verl.utils.model import get_hf_auto_model_class
         from verl.utils.torch_dtypes import PrecisionType
 
         torch_dtype = self.engine_config.model_dtype
@@ -246,62 +244,71 @@ class FSDPEngine(BaseEngine):
         with init_context(), warnings.catch_warnings():
             warnings.simplefilter("ignore")
 
-            if self.model_config.model_type == "language_model":
-                auto_class = get_hf_auto_model_class(hf_config=self.model_config.hf_config)
-
-                module = auto_class.from_pretrained(
-                    pretrained_model_name_or_path=self.model_config.local_path,
-                    torch_dtype=torch_dtype,
-                    config=self.model_config.hf_config,
-                    trust_remote_code=self.model_config.trust_remote_code,
-                )
-            else:
-                from verl.utils.model import load_valuehead_model
-
-                assert self.model_config.model_type == "value_model", (
-                    f"Unsupported model type: {self.model_config.model_type}"
-                )
-                self.model_config.hf_config.num_labels = 1
-                self.model_config.hf_config.classifier_dropout = 0.0
-                self.model_config.hf_config.hidden_dropout = "0"
-                self.model_config.hf_config.summary_dropout_prob = 0.0
-                module = load_valuehead_model(
-                    local_path=self.model_config.local_path,
-                    torch_dtype=torch_dtype,
-                    model_config=self.model_config.hf_config,
-                    trust_remote_code=self.model_config.trust_remote_code,
-                )
-
-            use_liger = self.model_config.use_liger
-            # Apply Liger kernel; disable fused_linear_cross_entropy (conflicts with verl's forward patching)
-            if use_liger:
-                from liger_kernel.transformers.monkey_patch import _apply_liger_kernel_to_instance
-
-                _apply_liger_kernel_to_instance(
-                    model=module,
-                    fused_linear_cross_entropy=False,
-                    swiglu=True,
-                )
-
-            fused_kernel_options = self.model_config.fused_kernel_options
-            fused_kernels_backend = (
-                fused_kernel_options.get("impl_backend", None) if fused_kernel_options is not None else None
-            )
-
-            use_fused_kernels = self.model_config.use_fused_kernels
-            apply_monkey_patch(
-                model=module,
-                use_remove_padding=self.use_remove_padding,
-                ulysses_sp_size=self.ulysses_sequence_parallel_size,
-                use_fused_kernels=use_fused_kernels,
-                fused_kernels_backend=fused_kernels_backend,
-            )
+            module = self._load_model(torch_dtype)
 
             # some parameters may not in torch_dtype
             module.to(torch_dtype)
 
             if self.model_config.enable_gradient_checkpointing:
                 module.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        return module
+
+    def _load_model(self, torch_dtype):
+        """Construct the model; explicit recipes override this legacy compatibility boundary."""
+        from verl.models.transformers.monkey_patch import apply_monkey_patch
+        from verl.utils.model import get_hf_auto_model_class
+
+        if self.model_config.model_type == "language_model":
+            auto_class = get_hf_auto_model_class(hf_config=self.model_config.hf_config)
+
+            module = auto_class.from_pretrained(
+                pretrained_model_name_or_path=self.model_config.local_path,
+                torch_dtype=torch_dtype,
+                config=self.model_config.hf_config,
+                trust_remote_code=self.model_config.trust_remote_code,
+            )
+        else:
+            from verl.utils.model import load_valuehead_model
+
+            assert self.model_config.model_type == "value_model", (
+                f"Unsupported model type: {self.model_config.model_type}"
+            )
+            self.model_config.hf_config.num_labels = 1
+            self.model_config.hf_config.classifier_dropout = 0.0
+            self.model_config.hf_config.hidden_dropout = "0"
+            self.model_config.hf_config.summary_dropout_prob = 0.0
+            module = load_valuehead_model(
+                local_path=self.model_config.local_path,
+                torch_dtype=torch_dtype,
+                model_config=self.model_config.hf_config,
+                trust_remote_code=self.model_config.trust_remote_code,
+            )
+
+        use_liger = self.model_config.use_liger
+        # Apply Liger kernel; disable fused_linear_cross_entropy (conflicts with verl's forward patching)
+        if use_liger:
+            from liger_kernel.transformers.monkey_patch import _apply_liger_kernel_to_instance
+
+            _apply_liger_kernel_to_instance(
+                model=module,
+                fused_linear_cross_entropy=False,
+                swiglu=True,
+            )
+
+        fused_kernel_options = self.model_config.fused_kernel_options
+        fused_kernels_backend = (
+            fused_kernel_options.get("impl_backend", None) if fused_kernel_options is not None else None
+        )
+
+        use_fused_kernels = self.model_config.use_fused_kernels
+        apply_monkey_patch(
+            model=module,
+            use_remove_padding=self.use_remove_padding,
+            ulysses_sp_size=self.ulysses_sequence_parallel_size,
+            use_fused_kernels=use_fused_kernels,
+            fused_kernels_backend=fused_kernels_backend,
+        )
+
         return module
 
     def _build_lora_module(self, module):

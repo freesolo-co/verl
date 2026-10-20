@@ -294,8 +294,7 @@ class ReplayBuffer:
                     return KVBatchMeta(partition_id=partition_id, keys=keys, tags=tags)
 
 
-@ray.remote
-class AgentLoopWorkerTQ(AgentLoopWorker):
+class AgentLoopWorkerTQBase(AgentLoopWorker):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         tq.init()
@@ -449,9 +448,14 @@ class AgentLoopWorkerTQ(AgentLoopWorker):
         )
 
 
+AgentLoopWorkerTQ = ray.remote(AgentLoopWorkerTQBase)
+
+
 class AgentLoopManagerTQ(AgentLoopManager):
+    worker_class = AgentLoopWorkerTQ
+
     def __init__(self, *args, replay_buffer: ReplayBuffer, **kwargs):
-        self.agent_loop_workers_class = AgentLoopWorkerTQ
+        self.agent_loop_workers_class = self.worker_class
         super().__init__(*args, **kwargs)
         self.replay_buffer = replay_buffer
 
@@ -507,6 +511,8 @@ class PPOTrainer:
         resource_pool_manager: ResourcePoolManager
     """
 
+    tracking_class = Tracking
+
     def __init__(
         self,
         config: DictConfig,
@@ -519,13 +525,16 @@ class PPOTrainer:
         self.use_critic = need_critic(self.config)
         self.use_reference_policy = need_reference_policy(self.config)
         self.use_teacher_policy = need_teacher_policy(self.config)
-        self.replay_buffer = ReplayBuffer()
+        self.replay_buffer = self._create_replay_buffer()
         if self.config.algorithm.use_kl_in_reward:
             self.kl_ctrl_in_reward = core_algos.get_kl_controller(self.config.algorithm.kl_ctrl)
 
         self._init_tokenizer()
         self._init_dataloader()
         self._init_dump_executor()
+
+    def _create_replay_buffer(self):
+        return ReplayBuffer()
 
     def _init_tokenizer(self):
         """Initialize tokenizer."""
@@ -1694,7 +1703,7 @@ class PPOTrainer:
         if self._dump_executor._shutdown:
             self._init_dump_executor()
 
-        self.logger = Tracking(
+        self.logger = self.tracking_class(
             project_name=self.config.trainer.project_name,
             experiment_name=self.config.trainer.experiment_name,
             default_backend=self.config.trainer.logger,

@@ -16,7 +16,6 @@ Apply monkey-patch function to models
 """
 
 import sys
-from types import SimpleNamespace
 from typing import Optional
 
 import torch
@@ -24,7 +23,6 @@ from transformers.modeling_flash_attention_utils import _flash_attention_forward
 from transformers.modeling_utils import PreTrainedModel
 
 from verl.utils.import_utils import is_trl_available
-from verl.utils.transformers_compat import is_transformers_version_in_range
 from verl.utils.ulysses import (
     gather_heads_scatter_seq,
     gather_seq_scatter_heads,
@@ -359,25 +357,16 @@ def apply_monkey_patch(
     # TODO: VLM models only, unify monkey patch to LLM models.
     if model.config.model_type in ["qwen2_5_vl", "qwen2_vl"]:
         # Step 1: patch model to support image-text mixed data
-        if is_transformers_version_in_range(min_version="4.52.0"):
-            from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
-                Qwen2_5_VLForConditionalGeneration,
-                Qwen2_5_VLModel,
-                Qwen2_5_VLTextModel,
-            )
-            from transformers.models.qwen2_vl.modeling_qwen2_vl import (
-                Qwen2VLForConditionalGeneration,
-                Qwen2VLModel,
-                Qwen2VLTextModel,
-            )
-        else:
-            from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLForConditionalGeneration
-            from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLModel as Qwen2_5_VLTextModel
-            from transformers.models.qwen2_vl.modeling_qwen2_vl import Qwen2VLForConditionalGeneration
-            from transformers.models.qwen2_vl.modeling_qwen2_vl import Qwen2VLModel as Qwen2VLTextModel
-
-            Qwen2_5_VLModel = SimpleNamespace(forward=None)
-            Qwen2VLModel = SimpleNamespace(forward=None)
+        from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+            Qwen2_5_VLForConditionalGeneration,
+            Qwen2_5_VLModel,
+            Qwen2_5_VLTextModel,
+        )
+        from transformers.models.qwen2_vl.modeling_qwen2_vl import (
+            Qwen2VLForConditionalGeneration,
+            Qwen2VLModel,
+            Qwen2VLTextModel,
+        )
 
         from verl.models.transformers.qwen2_vl import forward_with_normal_backend, qwen2_vl_base_forward
 
@@ -388,16 +377,8 @@ def apply_monkey_patch(
         print(f"Monkey patch {model.__class__.__name__} model forward")
 
         # Step 2: patch attention to support ulysses parallelism
-        if is_transformers_version_in_range(min_version="4.54.0"):
-            from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLAttention
-            from transformers.models.qwen2_vl.modeling_qwen2_vl import Qwen2VLAttention
-        elif is_transformers_version_in_range(min_version="4.53.0"):
-            raise RuntimeError("Transformers 4.53.* is bugged. Use transformers 4.54.0 or later.")
-        else:
-            from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
-                Qwen2_5_VLFlashAttention2 as Qwen2_5_VLAttention,
-            )
-            from transformers.models.qwen2_vl.modeling_qwen2_vl import Qwen2VLFlashAttention2 as Qwen2VLAttention
+        from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLAttention
+        from transformers.models.qwen2_vl.modeling_qwen2_vl import Qwen2VLAttention
 
         if use_remove_padding or ulysses_sp_size > 1:
             from verl.models.transformers.qwen2_vl import qwen2_vl_attn_forward
@@ -429,7 +410,6 @@ def apply_monkey_patch(
         from verl.models.transformers.qwen3_vl import (
             fast_pos_embed_interpolate,
             forward_with_normal_backend,
-            patch_qwen3_vl_moe_sparse_moe_block_forward,
             qwen3_vl_base_forward,
         )
 
@@ -440,10 +420,6 @@ def apply_monkey_patch(
         Qwen3VLMoeVisionModel.fast_pos_embed_interpolate = fast_pos_embed_interpolate
         Qwen3VLVisionModel.fast_pos_embed_interpolate = fast_pos_embed_interpolate
         print(f"Monkey patch {model.__class__.__name__} model forward")
-
-        # Step 1.5: patch Qwen3VLMoeTextSparseMoeBlock to fix transformers 4.57.3 bug
-        if model.config.model_type == "qwen3_vl_moe" and is_transformers_version_in_range(max_version="4.57.3"):
-            patch_qwen3_vl_moe_sparse_moe_block_forward()
 
         # Step 2: patch input for multimodal sequence parallelism
         if ulysses_sp_size > 1:

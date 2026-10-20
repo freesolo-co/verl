@@ -18,14 +18,13 @@ import os
 import platform
 import signal
 import threading
-from types import MethodType
 from typing import Any, Literal, Optional, get_args
 
 import torch
 from vllm.outputs import RequestOutput
 
 from verl.utils.device import is_npu_available
-from verl.utils.vllm import TensorLoRARequest, VLLMHijack
+from verl.utils.vllm import TensorLoRARequest, TensorLoRAWorkerManager
 from verl.utils.vllm.patch import patch_vllm_moe_model_weight_loader
 from verl.utils.vllm.vllm_fp8_utils import apply_vllm_fp8_patches, is_fp8_model, load_quanted_weights
 
@@ -87,22 +86,6 @@ def get_vllm_max_lora_rank(lora_rank: int):
             return rank
 
 
-# https://github.com/vllm-project/vllm/issues/13175
-def monkey_patch_compute_logits(model, vocab_size: int):
-    original_compute_logits = model.compute_logits
-
-    def compute_logits(
-        self,
-        *args,
-        **kwargs,
-    ) -> torch.Tensor:
-        logits = original_compute_logits(*args, **kwargs)
-        logits[..., vocab_size:] = float("-inf")
-        return logits
-
-    model.compute_logits = MethodType(compute_logits, model)
-
-
 class vLLMColocateWorkerExtension:
     """
     The class for vLLM's worker to inherit from, in the colocate setting.
@@ -120,8 +103,6 @@ class vLLMColocateWorkerExtension:
     def __new__(cls, **kwargs):
         set_death_signal()
 
-        # 1. patch for Lora
-        VLLMHijack.hijack()
         # 2. patch online fp8 quant
         if os.environ.get("VERL_VLLM_FP8_QUANT_ENABLED", "0") == "1":
             apply_vllm_fp8_patches()
@@ -187,11 +168,16 @@ class vLLMColocateWorkerExtension:
             if draft_cfg is not None:
                 yield self._get_drafter_model(), draft_cfg
 
-    def monkey_patch_model(self, vocab_size: int):
+    def initialize_model_runtime(self, vocab_size: int):
+        from verl.utils.vllm.vocabulary import configure_model_vocabulary
+
+        for handle in getattr(self, "_vocabulary_hooks", []):
+            handle.remove()
+        self._vocabulary_hooks = []
         for model in self._iter_all_models():
-            # patch compute_logits to avoid sampling OOV token
-            monkey_patch_compute_logits(model, vocab_size)
-            # patch weight loader to support MoE model
+            self._vocabulary_hooks.extend(configure_model_vocabulary(model, vocab_size))
+            # Required even on 0.19.1: MoE post-load transforms replace Parameters
+            # and can discard their loaders. See the documented remaining boundary.
             patch_vllm_moe_model_weight_loader(model)
 
     def update_weights_from_ipc(self, peft_config: dict = None, base_sync_done=False, use_shm: bool = False):
@@ -202,10 +188,6 @@ class vLLMColocateWorkerExtension:
 
         if current_platform.device_type == "npu" and self.device is None:
             self.device = torch.device(f"npu:{self.local_rank}")
-
-        # In async mode, make sure the old lora is removed before adding the new one
-        if peft_config and base_sync_done:
-            self.remove_lora(VLLM_LORA_INT_ID)
 
         use_standard_weight_load = not (peft_config and base_sync_done) and not is_fp8_model(
             self.model_runner.vllm_config
@@ -293,8 +275,9 @@ class vLLMColocateWorkerExtension:
                 lora_path=VLLM_LORA_PATH,
                 peft_config=peft_config,
                 lora_tensors=weights,
+                load_inplace=True,
             )
-            self.add_lora(lora_request)
+            TensorLoRAWorkerManager.for_worker(self.model_runner).add_adapter(lora_request)
             logger.info(f"vLLM load weights, loaded_params: {len(weights)}")
         else:
             # Add the FP8 related logic here as sharding manager has been deprecated.

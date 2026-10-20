@@ -12,10 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from verl.models.transformers.monkey_patch import apply_monkey_patch
-from verl.models.transformers.tiled_mlp import apply_tiled_mlp_monkey_patch
 
-__all__ = [
-    "apply_monkey_patch",
-    "apply_tiled_mlp_monkey_patch",
-]
+def apply_monkey_patch(*args, **kwargs):
+    """Legacy recipes opt into their model compatibility implementation."""
+    from .monkey_patch import apply_monkey_patch as apply
+
+    return apply(*args, **kwargs)
+
+
+def apply_tiled_mlp_monkey_patch(*args, **kwargs):
+    from .tiled_mlp import apply_tiled_mlp_monkey_patch as apply
+
+    return apply(*args, **kwargs)
+
+
+__all__ = ["apply_monkey_patch", "apply_tiled_mlp_monkey_patch"]

@@ -83,7 +83,7 @@ class TrainingWorker(Worker, DistProfilerExtension):
     def __init__(self, config: TrainingWorkerConfig):
         Worker.__init__(self)
 
-        from verl.workers.engine import BaseEngine, EngineRegistry
+        from verl.workers.engine import BaseEngine
 
         initialize_global_process_group_ray(timeout_second=None)
 
@@ -124,9 +124,10 @@ class TrainingWorker(Worker, DistProfilerExtension):
         )
 
         self.model_config.model_type = self.config.model_type
-        self.engine: BaseEngine = EngineRegistry.new(
-            model_type=self.config.model_type,
-            backend=self.engine_config.strategy,
+        from verl.runtime_interfaces import resolve_engine_class
+
+        engine_cls = resolve_engine_class(self.model_config, self.config.model_type, self.engine_config.strategy)
+        self.engine: BaseEngine = engine_cls(
             model_config=self.model_config,
             engine_config=self.engine_config,
             optimizer_config=self.optimizer_config,

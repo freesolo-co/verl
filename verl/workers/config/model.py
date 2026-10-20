@@ -92,6 +92,9 @@ class HFModelConfig(BaseConfig):
     tokenizer_path: Optional[str] = None
     local_tokenizer_path: Optional[str] = None
 
+    # Optional packaged engine and recipe-owned serializable options.
+    custom_engine_class: str | None = None
+    runtime_options: dict = field(default_factory=dict)
     # model type, e.g., "language_model", "value_model"
     model_type: str = "language_model"
 

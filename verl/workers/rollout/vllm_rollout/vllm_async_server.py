@@ -400,7 +400,7 @@ class vLLMHttpServer:
         # Don't keep the dummy data in memory
         await engine_client.reset_mm_cache()
         await engine_client.collective_rpc(
-            method="monkey_patch_model", kwargs={"vocab_size": len(self.model_config.tokenizer)}
+            method="initialize_model_runtime", kwargs={"vocab_size": len(self.model_config.tokenizer)}
         )
 
         build_app_sig = inspect.signature(build_app)
@@ -529,6 +529,9 @@ class vLLMHttpServer:
                 lora_request = LoRARequest(
                     lora_name=VLLM_LORA_NAME, lora_int_id=VLLM_LORA_INT_ID, lora_path=VLLM_LORA_PATH
                 )
+
+        if self.lora_as_adapter and lora_request is None:
+            raise RuntimeError("refusing rollout: trained LoRA adapter is not loaded")
 
         generator = self.engine.generate(
             prompt=prompt,

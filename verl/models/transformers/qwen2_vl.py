@@ -29,7 +29,7 @@ from transformers.models.qwen2_vl.modeling_qwen2_vl import (
 from transformers.utils import is_flash_attn_2_available, is_flash_attn_greater_or_equal_2_10
 
 from verl.utils.device import is_npu_available
-from verl.utils.transformers_compat import is_transformers_version_in_range, unpack_visual_output
+from verl.utils.transformers_compat import unpack_visual_output
 from verl.utils.ulysses import (
     gather_heads_scatter_seq,
     gather_seq_scatter_heads,
@@ -333,10 +333,7 @@ def qwen2_vl_attn_forward(
     )  # (batch_size, seq_length / sp_size, num_head, head_size)
     attn_output = attn_output.reshape(bsz, q_len, self.hidden_size).contiguous()
     attn_output = self.o_proj(attn_output)
-    if is_transformers_version_in_range(min_version="4.54.0"):
-        return attn_output, None
-    else:
-        return attn_output, None, None
+    return attn_output, None
 
 
 def _get_input_embeds(
@@ -405,10 +402,6 @@ def process_position_ids(position_ids: torch.Tensor) -> torch.Tensor:
         # see https://github.com/huggingface/transformers/pull/39447
         raise ValueError("position_ids should be a 3D tensor of shape (4, batch_size, seq_length).")
 
-    if is_transformers_version_in_range(max_version="4.53.3"):
-        # transformers < 4.54.0 only accepts vision position ids, so we discard the text position ids here
-        position_ids = position_ids[1:]
-
     return position_ids
 
 
@@ -446,28 +439,16 @@ def qwen2_vl_forward(
     video_grid_thw: Optional[torch.LongTensor] = None,
     **kwargs,
 ):
-    if is_transformers_version_in_range(min_version="4.52.0"):
-        return self.model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            position_ids=process_position_ids(position_ids),
-            pixel_values=pixel_values,
-            pixel_values_videos=pixel_values_videos,
-            image_grid_thw=image_grid_thw,
-            video_grid_thw=video_grid_thw,
-            **kwargs,
-        )
-    else:
-        inputs_embeds, attention_mask = _get_input_embeds(
-            self, input_ids, attention_mask, pixel_values, pixel_values_videos, image_grid_thw, video_grid_thw
-        )
-        return self.model(
-            input_ids=None,
-            attention_mask=attention_mask,
-            position_ids=process_position_ids(position_ids),
-            inputs_embeds=inputs_embeds,
-            **kwargs,
-        )
+    return self.model(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        position_ids=process_position_ids(position_ids),
+        pixel_values=pixel_values,
+        pixel_values_videos=pixel_values_videos,
+        image_grid_thw=image_grid_thw,
+        video_grid_thw=video_grid_thw,
+        **kwargs,
+    )
 
 
 def forward_with_normal_backend(

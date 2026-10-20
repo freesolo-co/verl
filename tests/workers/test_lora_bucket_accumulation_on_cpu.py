@@ -53,12 +53,10 @@ class _RecordingLoRARequest:
         self.peft_config = kwargs["peft_config"]
 
 
-class _NoopHijack:
-    """``vLLMColocateWorkerExtension.__new__`` patches vllm for lora; nothing to patch here."""
-
+class _RecordingTensorManager:
     @staticmethod
-    def hijack():
-        return None
+    def for_worker(runner):
+        return runner.tensor_manager
 
 
 def _fake_torch_device():
@@ -83,7 +81,7 @@ def _load_production_modules():
             get_torch_device=_fake_torch_device,
         ),
         "verl.utils.vllm": _stub_module(
-            "verl.utils.vllm", TensorLoRARequest=_RecordingLoRARequest, VLLMHijack=_NoopHijack
+            "verl.utils.vllm", TensorLoRARequest=_RecordingLoRARequest, TensorLoRAWorkerManager=_RecordingTensorManager
         ),
         "verl.utils.vllm.patch": _stub_module(
             "verl.utils.vllm.patch", patch_vllm_moe_model_weight_loader=lambda model: None
@@ -211,7 +209,7 @@ def _make_worker(utils_module, *, peft_config, base_sync_done, buffer, script, s
     worker._iter_all_models_with_config = lambda: iter(())
 
     applied = []
-    worker.add_lora = lambda request: applied.append(request)
+    worker.model_runner.tensor_manager = types.SimpleNamespace(add_adapter=lambda request: applied.append(request))
     worker.remove_lora = lambda _lora_id: None
     # base (non-lora) weights go through model.load_weights inside _update_weights; record the
     # per-bucket payloads instead so the streaming path stays observable without a vllm model.

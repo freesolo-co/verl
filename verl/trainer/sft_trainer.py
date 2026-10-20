@@ -48,6 +48,9 @@ logger.setLevel(os.getenv("VERL_SFT_LOGGING_LEVEL", "WARN"))
 
 
 class SFTTrainer:
+    tracking_class = Tracking
+    checkpoint_handler_class = CheckpointHandler
+
     def __init__(
         self,
         config,
@@ -86,7 +89,7 @@ class SFTTrainer:
         default_hdfs_dir = getattr(self.config.trainer, "default_hdfs_dir", None)
         lora_train_meta = self._get_lora_train_meta()
 
-        self.ckpt_handler = CheckpointHandler(
+        self.ckpt_handler = self.checkpoint_handler_class(
             engine=self.engine,
             train_dataloader=self.train_dataloader,
             default_local_dir=self.config.trainer.default_local_dir,
@@ -310,7 +313,7 @@ class SFTTrainer:
 
         # TODO: add a unified tracking
         if is_logging:
-            tracking = Tracking(
+            tracking = self.tracking_class(
                 project_name=self.config.trainer.project_name,
                 experiment_name=self.config.trainer.experiment_name,
                 default_backend=self.config.trainer.logger,
