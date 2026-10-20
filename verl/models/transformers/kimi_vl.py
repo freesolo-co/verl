@@ -19,8 +19,6 @@ import torch.nn.functional as F
 from transformers.cache_utils import Cache
 from transformers.modeling_flash_attention_utils import _flash_attention_forward
 
-from verl.models.transformers.monkey_patch import is_transformers_version_in_range
-
 # Import compatibility wrapper for flash_attn_supports_top_left_mask
 from verl.utils.transformers_compat import flash_attn_supports_top_left_mask
 from verl.utils.ulysses import (
@@ -186,7 +184,4 @@ def _ulysses_flash_attn_forward(
     attn_output = attn_output.reshape(bsz, q_len, self.num_heads * self.v_head_dim).contiguous()
     attn_output = self.o_proj(attn_output)
 
-    if is_transformers_version_in_range(min_version="4.53.0"):
-        return attn_output, None
-    else:
-        return attn_output, None, None
+    return attn_output, None

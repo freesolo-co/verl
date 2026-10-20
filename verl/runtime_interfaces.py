@@ -4,7 +4,7 @@ Default recipes retain the registry-selected engine and the standard trainer ser
 See docs/runtime_interfaces.md for ownership and compatibility guarantees.
 """
 
-API_VERSION = 1
+API_VERSION = 2
 
 
 def resolve_engine_class(model_config, model_type: str, backend: str):

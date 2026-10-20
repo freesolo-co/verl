@@ -400,7 +400,7 @@ class vLLMHttpServer:
         # Don't keep the dummy data in memory
         await engine_client.reset_mm_cache()
         await engine_client.collective_rpc(
-            method="monkey_patch_model", kwargs={"vocab_size": len(self.model_config.tokenizer)}
+            method="initialize_model_runtime", kwargs={"vocab_size": len(self.model_config.tokenizer)}
         )
 
         build_app_sig = inspect.signature(build_app)
